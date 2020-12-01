@@ -5,7 +5,7 @@ from jax import jit, device_put, lax
 import jax
 import jax.numpy as jnp
 import numpy as np
-from tqdm import tqdm
+from tqdm.autonotebook import tqdm
 from time import time
 from jax.lib import xla_bridge
 from dataset import ArenaDataset
@@ -24,6 +24,9 @@ def train(epochs=1900, max_grad_norm=10):
 
     pbar = tqdm(range(1, epochs))
     for epoch in pbar:
+        # Print current epoch
+        tqdm.write("\nEpoch: {}".format(epoch))
+
         # Save weights every 100 epochs
         if epoch % 10 == 0:
             jnp.save('epoch_{}.npy'.format(epoch), parameters)
@@ -39,7 +42,7 @@ def train(epochs=1900, max_grad_norm=10):
 
         # Backpropagate the error to calculate the gradients
         loss = loss_mse + loss_l2 + loss_h
-        print('loss_l2, loss_h: ', (loss_l2.item(), loss_h.item()))
+        tqdm.write('loss_l2, loss_h: {:.3f}, {:.3f}'.format(loss_l2.item(), loss_h.item()))
         pbar.set_postfix({'loss': float(loss),
                           'mse': float(loss_mse)})
 
@@ -74,21 +77,26 @@ def train(epochs=1900, max_grad_norm=10):
         # Compute the reduction ratio rho
         rho = reduction_ratio(parameters, delta, x, y, grad, regularization)
         if rho > -float('inf'):
-            print('rho: ', rho.item())
+            tqdm.write('rho: {}'.format(rho.item()))
         else:
-            print('rho: -inf')
+            tqdm.write('rho: -inf')
 
         # Backtracking line search to find the learning rate
         rate, reject_step = line_search(parameters, x, y, delta, grad, regularization)
-        print('rate: ', rate)
+        tqdm.write('rate: {}'.format(rate))
 
         # Update the dampening parameter
         regularization = update_dampening(rho, regularization)
-        print('l_l2, l_h, l_sd: ', regularization)
+        tqdm.write('l_l2, l_h, l_sd: {:.4f}, {:.4f}, {:.4f}'.format(*regularization))
 
         # Update the parameters
         if not reject_step:
             parameters = parameters + rate * delta
+
+        # Show improvement
+        tqdm.write("Initial loss, new loss: {:.4f}, {:.4f}".format(
+            loss, sum(loss_function(x, y, parameters, regularization))
+        ))
 
 
 def init_params(d=100, d_in=2, d_out=2, d_incoming=15):
