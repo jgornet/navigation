@@ -7,7 +7,7 @@ def vec_to_onehot(vec, max_val=9):
     one_hot = np.zeros((v.size, max_val + 1))
     one_hot[np.arange(v.size), v] = 1
 
-    return one_hot
+    return one_hot.astype(np.bool)
 
 
 class ArenaDataset():
@@ -39,8 +39,8 @@ class ArenaDataset():
             return egocentric, allocentric
 
         def step(self):
-            speed = self.rng.rand(self.batch_size) * 0.2
-            speed[self.rng.choice(self.batch_size, size=int(self.batch_size * 0.9), replace=False)] = 0
+            speed = self.rng.rand(self.batch_size) * 0.1
+            speed[self.rng.choice(self.batch_size, size=int(self.batch_size * 0.8), replace=False)] = 0
 
             ang_vel = self.rng.randn(self.batch_size) / 3
             direction = np.mod(ang_vel + self.direction, 2 * np.pi)
@@ -55,7 +55,7 @@ class ArenaDataset():
             repeat = False
             while oob.any():
                 if repeat:
-                    speed[oob] = self.rng.rand(np.sum(oob)) * 0.2
+                    speed[oob] = self.rng.rand(np.sum(oob)) * 0.15
                     ang_vel[oob] = self.rng.randn(np.sum(oob)) / 2
                 else:
                     ang_vel[oob] = self.rng.randn(np.sum(oob)) / 3
