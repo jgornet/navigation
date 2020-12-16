@@ -1,5 +1,5 @@
-# from jax.config import config
-# config.update("jax_enable_x64", True)
+from jax.config import config
+config.update("jax_enable_x64", True)
 
 from jax import jit, device_put, lax
 import jax
@@ -8,21 +8,24 @@ import numpy as np
 from tqdm.autonotebook import tqdm
 from time import time
 from jax.lib import xla_bridge
-from dataset import ArenaDataset
+from dataset import ArenaDataset, SphereDataset
 
 def main():
     print(xla_bridge.get_backend().platform)
-    # resume('epoch_320.npy')
+    # resume('epoch_400.npy')
     train()
 
-def resume(param_fn, reg=[0.0008, 0.1, 1.7127], epochs=1900, max_grad_norm=10):
-    arena = iter(ArenaDataset(steps=450))
-    parameters = jnp.load(param_fn)
+def resume(param_fn, reg=[1e-10, 0.0039, 1500*1e-10], epochs=1900, max_grad_norm=10):
+    arena = iter(SphereDataset(batch_size=1000, steps=450))
+    parameters = jnp.load(param_fn).astype(jnp.float64)
     
     regularization = reg
     delta = jnp.zeros_like(parameters)
 
     pbar = tqdm(range(1, epochs))
+
+    # Debug overfit
+    batch = next(arena)
     for epoch in pbar:
         # Print current epoch
         tqdm.write("\nEpoch: {}".format(epoch))
@@ -32,7 +35,7 @@ def resume(param_fn, reg=[0.0008, 0.1, 1.7127], epochs=1900, max_grad_norm=10):
             jnp.save('epoch_{}.npy'.format(epoch), parameters)
 
         # Generate the training data for this epoch
-        batch = next(arena)
+        # batch = next(arena)
 
         # Run step
         parameters, regularization, delta = step(
@@ -41,19 +44,20 @@ def resume(param_fn, reg=[0.0008, 0.1, 1.7127], epochs=1900, max_grad_norm=10):
 
 
 def train(epochs=1900, max_grad_norm=10):
-    arena = iter(ArenaDataset(steps=450))
+    arena = iter(ArenaDataset(batch_size=500, steps=100))
     parameters = init_params()
     
     regularization = init_regularization()
     delta = jnp.zeros_like(parameters)
 
     pbar = tqdm(range(1, epochs))
+    batch = next(arena)
     for epoch in pbar:
         # Print current epoch
         tqdm.write("\nEpoch: {}".format(epoch))
 
         # Save weights every 100 epochs
-        if epoch % 10 == 0:
+        if epoch % 20 == 0:
             jnp.save('epoch_{}.npy'.format(epoch), parameters)
 
         # Generate the training data for this epoch
@@ -68,7 +72,7 @@ def train(epochs=1900, max_grad_norm=10):
 def step(batch, parameters, regularization, delta, epoch, max_grad_norm=10):
     # Get inputs and targets from batch
     x, y = batch
-    x = jnp.array(x.reshape(-1))
+    x = jnp.array(x)
     y = jnp.array(y)
 
     # Compute the prediction and error
@@ -95,15 +99,16 @@ def step(batch, parameters, regularization, delta, epoch, max_grad_norm=10):
 
     # Minimize the positive-definite quadratic approximation of the error
     delta_norm = jnp.sqrt(jnp.sum(delta**2))
-    if epoch % 10 == 0:
-        delta = (-2*delta_norm/grad_norm) * grad
-        delta_norm = jnp.sqrt(jnp.sum(delta**2))
-    else:
-        delta = 0.95 * delta
+    # if epoch % 10 == 0:
+    #     delta = (-2*delta_norm/grad_norm) * grad
+    #     delta_norm = jnp.sqrt(jnp.sum(delta**2))
+    # else:
+    #     delta = 0.95 * delta
+    delta = 0.95 * delta
 
     delta_list, _ = conjugate_gradient(
         A=lambda v: G(v, x, parameters, regularization),
-        b=-grad, x0=delta, max_iter=25)
+        b=-grad, x0=delta, max_iter=50)
 
     # CG-backtracking
     delta, loss_now = backtracking(parameters, delta_list, x, y, regularization)
@@ -178,8 +183,8 @@ def loss_function(x, y, parameters, regularization):
     loss_h = l_h * jnp.mean(h**2) * 0.5
     loss_l2 = 0.5 * l_l2 * jnp.mean(jnp.concatenate((W_hx, W_yh))**2)
 
-    # loss_mse = jnp.mean(0.5*jnp.square(y_hat - y))
-    loss_mse = jnp.mean(jnp.square(y_hat - y))
+    loss_mse = jnp.mean(0.5*jnp.square(y_hat - y))
+    # loss_mse = jnp.mean(jnp.square(y_hat - y))
 
     return loss_mse, loss_l2, loss_h
 
@@ -189,9 +194,9 @@ def predict(x, params, dt=1, tau=10, steps=450):
     W_hx = params[:200].reshape((2, 100))
     W_hh = params[200:10200].reshape((100, 100))
     W_yh = params[10200:10400].reshape((100, 2))
-    b_h = params[10400:].reshape(100)
+    b_h = params[10400:10500].reshape(100)
 
-    x = x.reshape((500, 450, 2))
+    # x = x.reshape((500, 450, 2))
     x = x.transpose((1, 0, 2))
     h_lin = jnp.zeros((x.shape[1], 100))
 
@@ -202,7 +207,7 @@ def predict(x, params, dt=1, tau=10, steps=450):
 
         return h_lin, jnp.concatenate((y_hat, h, h_lin), axis=1)
 
-    _, output = lax.scan(scan_f, h_lin, x, length=450)
+    _, output = lax.scan(scan_f, h_lin, x, length=steps)
 
     return output.transpose((1, 0, 2))
 
@@ -216,6 +221,7 @@ def div(x, y, params, reg):
 def G(v, x, params, reg, loss='mse'):
     l_l2, l_h, l_sd = reg
     output = predict(x, params)
+    batch_sz, steps, _ = x.shape
     
     _, Jv = jax.jvp(lambda params: predict(x, params), (params,), (v,))
     if 'mse' in loss:
@@ -231,9 +237,9 @@ def G(v, x, params, reg, loss='mse'):
             Jv[:, :, 10:110], Jv[:, :, 110:] * (1-tanh**2)
         ), axis=2)
         
-    diag = jnp.concatenate((jnp.ones(2) * 2 / (2 * 450 * 500), 
-                            jnp.ones(100) * l_h / (100 * 450 * 500), 
-                            jnp.ones(100) * l_sd / (100 * 450 * 500)))
+    diag = jnp.concatenate((jnp.ones(2) * 2 / (2 * batch_sz * steps), 
+                            jnp.ones(100) * l_h / (100 * batch_sz * steps), 
+                            jnp.ones(100) * l_sd / (100 * batch_sz * steps)))
     HJv = diag[None, None, :] * HJv
     _, vjp = jax.vjp(lambda params: predict(x, params), params)
     JHJv = vjp(HJv)
@@ -294,8 +300,10 @@ def update_dampening(rho, regularization):
 
     if rho > 0.75:
         l_l2 *= 2/3
+        l_h *= 2/3
     elif rho < 0.25:
         l_l2 *= 3/2
+        l_h *= 3/2
 
     return l_l2, l_h, l_sd
 
@@ -305,15 +313,11 @@ def update_regularization(loss_mse, loss_l2, loss_h, regularization):
 
     if loss_l2 > 1/3 * loss_mse:
         l2 = 2/3 * l_l2
-    elif loss_l2 < 1/2000 * loss_mse:
-        l2 = 3/2 * l_l2
     else:
         l2 = l_l2
 
     if loss_h > 1/3 * loss_mse:
         h = 2/3 * l_h
-    elif loss_h < 1/100 * loss_mse:
-        h = 3/2 * l_h
     else:
         h = l_h
 
@@ -374,7 +378,8 @@ def conjugate_gradient(A, b, x0, M=None, max_iter=50):
 
         k = max(10, np.ceil(0.1 * i))
         phi[i-1] = 0.5 * (-b - r).dot(x)
-        if i > k and phi[i-k-1] < 0 and (phi[i-1] - phi[i-k-1])/phi[i-1] < 0.0005*k:
+        # if i > k and phi[i-k-1] < 0 and (phi[i-1] - phi[i-k-1])/phi[i-1] < 1e-4:
+        if i > k and phi[i-k-1] < 0 and (phi[i-1] - phi[i-k-1])/phi[i-1] < 1e-4:
             break
 
         i += 1
