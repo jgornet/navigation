@@ -13,11 +13,10 @@ def vec_to_onehot(vec, max_val=9):
 class ArenaDataset():
     class Arena:
         def __init__(self, batch_size, steps=500):
-            self.rng = np.random.RandomState(seed=2)
+            self.seed = 1
+            self.rng = np.random.RandomState(seed=self.seed)
             self.batch_size = batch_size
             self.steps = steps
-            self.pos = np.zeros((batch_size, 2))
-            self.direction = 2 * np.pi * np.random.rand(batch_size)
 
         def _in_bounds(self, pos):
             in_bounds = np.prod((pos > -1) & (pos < 1), axis=1) > 0
@@ -28,25 +27,29 @@ class ArenaDataset():
             return self
 
         def __next__(self):
+            self.seed += 1
+            self.rng = np.random.RandomState(seed=self.seed)
             self.pos = np.zeros((self.batch_size, 2))
             self.direction = 2 * np.pi * self.rng.rand(self.batch_size)
+            self.mask = np.zeros((self.batch_size, self.steps)).astype(np.bool)
+            for i in range(self.batch_size):
+                self.mask[i, self.rng.choice(self.steps, size=int(self.steps * 0.1),
+                                             replace=False)] = 1
+
             egocentric = np.empty((self.batch_size, self.steps, 2))
             allocentric = np.empty((self.batch_size, self.steps, 2))
             for i in range(self.steps):
-                batch = self.step()
+                batch = self.step(i)
                 egocentric[:, i, :], allocentric[:, i, :] = batch
 
             return egocentric, allocentric
 
-        def step(self):
-            speed = self.rng.rand(self.batch_size) * 0.1
-            speed[self.rng.choice(self.batch_size, size=int(self.batch_size * 0.8), replace=False)] = 0
+        def step(self, iteration):
+            speed = self.rng.rand(self.batch_size) * 0.2
+            speed[~self.mask[:, iteration]] = 0
 
             ang_vel = self.rng.randn(self.batch_size) / 3
             direction = np.mod(ang_vel + self.direction, 2 * np.pi)
-
-            # Testing when direction doesn't change when still
-            # direction[speed == 0] = self.direction[speed == 0]
             
             pos = self.pos + np.stack([speed * np.cos(direction),
                                        speed * np.sin(direction)], axis=1)
@@ -55,8 +58,7 @@ class ArenaDataset():
             repeat = False
             while oob.any():
                 if repeat:
-                    speed[oob] = self.rng.rand(np.sum(oob)) * 0.15
-                    ang_vel[oob] = self.rng.randn(np.sum(oob)) / 2
+                    ang_vel[oob] += self.rng.randn(np.sum(oob)) / 3
                 else:
                     ang_vel[oob] = self.rng.randn(np.sum(oob)) / 3
                     
@@ -104,7 +106,7 @@ class SequenceDataset():
             self.pos = np.zeros((self.batch_size, 1))
             self.direction = np.random.choice([-1, 1], (self.batch_size, 1))
             egocentric = np.empty((self.batch_size, self.steps, 2))
-            allocentric = np.empty((self.batch_size, self.steps, 10))
+            allocentric = np.empty((self.batch_size, self.steps, 1))
             for i in range(self.steps):
                 batch = self.step()
                 egocentric[:, i, :], allocentric[:, i, :] = batch
@@ -113,7 +115,7 @@ class SequenceDataset():
 
         def step(self):
             speed = np.ones((self.batch_size, 1))
-            speed[np.random.rand(self.batch_size, 1) > 0.1] = 0
+            speed[np.random.rand(self.batch_size, 1) > 0.75] = 0
 
             direction = np.random.choice(
                 [-1, 1], size=(self.batch_size, 1), p=[1/3, 2/3]
@@ -132,8 +134,7 @@ class SequenceDataset():
             self.direction = direction
             self.speed = speed
 
-            return (np.concatenate([direction, speed], axis=1),
-                    vec_to_onehot(self.pos))
+            return (np.concatenate([direction, speed], axis=1), self.pos)
 
     def __iter__(self):
         self.arena = self.Arena(self.batch_size, self.steps)
@@ -213,6 +214,7 @@ class SphereDataset(ArenaDataset):
             self.batch_size = batch_size
             self.steps = steps
             self.pos = np.pi * np.ones((batch_size, 2))
+            # self.pos = np.zeros((self.batch_size, 2))
             self.direction = 2 * np.pi * np.random.rand(batch_size)
             self.radius = 1
 
@@ -225,9 +227,10 @@ class SphereDataset(ArenaDataset):
 
         def __next__(self):
             self.pos = np.pi * np.ones((self.batch_size, 2))
+            # self.pos = np.zeros((self.batch_size, 2))
             self.direction = 2 * np.pi * np.random.rand(self.batch_size)
             self.speed = 0.1 * np.ones(self.batch_size)
-            inertial_f = np.empty((self.batch_size, self.steps, 3))
+            inertial_f = np.empty((self.batch_size, self.steps, 2))
             lab_f = np.empty((self.batch_size, self.steps, 2))
             for i in range(self.steps):
                 batch = self.step()
@@ -236,25 +239,25 @@ class SphereDataset(ArenaDataset):
             return inertial_f, lab_f
 
         def step(self):
-            speed = np.random.rand(self.batch_size) * 0.2
-            speed[np.random.rand(self.batch_size) > 0.1] = 0
+            speed = np.random.rand(self.batch_size) * 0.1
+            speed[np.random.rand(self.batch_size) > 0.75] = 0
 
             ang_vel = np.random.randn(self.batch_size) / 3
             direction = np.mod(ang_vel + self.direction, 2 * np.pi)
 
-            r = np.stack([speed * np.cos(direction),
-                          speed * np.sin(direction)], axis=1)
+            r = np.stack([speed * np.cos(ang_vel + self.direction),
+                          speed * np.sin(ang_vel + self.direction)], axis=1)
 
             pos = self.pos
             pos[r != 0] += r[r != 0] / self.radius
 
-            pos = self._in_bounds(pos)
+            pos = np.mod(pos, 2 * np.pi)
             
             self.pos = pos
             self.direction = direction
             self.speed = speed
 
-            return np.stack([direction / (2 * np.pi), speed], axis=1), self.pos
+            return np.stack([direction / (2 * np.pi), speed], axis=1), (self.pos - np.pi)
 
 
 class MNISTDataset():
