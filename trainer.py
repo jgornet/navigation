@@ -7,8 +7,8 @@ import torch.nn.functional as F
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+from IPython import display
 
-darkblue = (0, 0.08, 0.45)
 lightblue = '#A6B6FF'
 
 
@@ -26,6 +26,8 @@ class Trainer:
         for epoch in tqdm(range(1, num_epochs + 1)):
             self.epoch = epoch
             self.train(num_train_batch)
+
+            display.clear_output(wait=True)
             val_loss = self.validate(num_val_batch)
 
             fn = 'epoch_{}.ckpt'.format(epoch)
@@ -90,6 +92,7 @@ class Trainer:
             loss /= num_batch
             tqdm.write('Test Loss: {:7f}'.format(loss.item()))
             self.save_fig(prediction, positions, name='epoch_{}'.format(self.epoch))
+            self.create_halfspace_plot(self.model, self.val_dataset.bounds)
 
         return loss.item()
 
@@ -119,22 +122,69 @@ class Trainer:
         fn = name + '_' if name else ''
         path = os.path.join(self.checkpoint_path, fn + 'paths.png')
         plt.savefig(path, dpi=300, bbox_inches='tight')
+        plt.show()
+        plt.close()
+
+    def create_halfspace_plot(self, model, bounds, vel=[-0.01, 0], linewidth=0.5):
+        # Create local variables from loaded weights
+        W_x = model.w_x.weight.detach().cpu().numpy()
+        b_1 = model.w_x.bias.detach().cpu().numpy()
+        W_v = model.w_v.weight.detach().cpu().numpy()
+
+        # Initialize the figure
+        x = np.linspace(-1, 1, 201)
+        y = np.linspace(-1, 1, 201)
+        X = np.array(np.meshgrid(x, y)).copy()
+
+        # Generate half-space lines
+        x = np.array([-1.1, 1.1])
+        y = -W_x[:, 0]/W_x[:, 1]*x[:, None] - b_1/W_x[:, 1] - W_v @ np.array(vel)/W_x[:, 1]
+
+        fig = plt.figure(figsize=(10, 10))
+        
+        for i in range(y.shape[1]):
+            if W_x[i, 1] != 0:
+                plt.plot(x, y[:, i], color=plt.cm.Blues(0.2), linewidth=linewidth)
+            else:
+                plt.plot(np.ones(2) * -b_1[i]/W_x[i, 0], [-1.1, 1.1], color=plt.cm.Blues(0.2), linewidth=linewidth)
+
+        plt.xlim([-1.1, 1.1])
+        plt.ylim([-1.1, 1.1])
+
+        plt.xticks([])
+        plt.yticks([])
+
+        box = [-1, 1, -1, 1]
+        plt.plot([box[0], box[1]], [box[2], box[2]], color='k')
+        plt.plot([box[1], box[1]], [box[2], box[3]], color='k')
+        plt.plot([box[0], box[1]], [box[3], box[3]], color='k')
+        plt.plot([box[0], box[0]], [box[2], box[3]], color='k')
+
+
+        for bound in bounds:
+            plt.plot([bound[0], bound[1]], [bound[2], bound[2]], color='k')
+            plt.plot([bound[1], bound[1]], [bound[2], bound[3]], color='k')
+            plt.plot([bound[0], bound[1]], [bound[3], bound[3]], color='k')
+            plt.plot([bound[0], bound[0]], [bound[2], bound[3]], color='k')
+
+        plt.show()
         plt.close()
 
 
 def main():
     model = RNN()
     model = model.to('cuda:0')
-    # optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    optimizer = torch.optim.SGD(model.parameters(), lr=5e-4, momentum=0.9)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20, 30, 35], gamma=0.1)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-2, momentum=0.9)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 50, 60], gamma=0.1)
     train_dataset = HoleDataset(batch_size=128, steps=5)
     val_dataset = HoleDataset(batch_size=512, steps=20)
     
     ckpt_path = os.path.abspath('./checkpoints')
+    if not os.path.exists(ckpt_path):
+        os.makedirs(ckpt_path)
     trainer = Trainer(model, optimizer, scheduler, train_dataset, val_dataset,
                       checkpoint_path='./checkpoints')
-    trainer.fit(num_epochs=40, num_train_batch=1000, num_val_batch=10)
+    trainer.fit(num_epochs=70, num_train_batch=1000, num_val_batch=10)
 
 
 if __name__ == '__main__':

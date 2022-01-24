@@ -13,7 +13,7 @@ class RNN(nn.Module):
 
         self.w_x = nn.Linear(N_in, N)
         nn.init.normal_(self.w_x.weight, mean=0, std=1/sqrt(N_in))
-        nn.init.constant_(self.w_x.bias, 0)
+        nn.init.normal_(self.w_x.bias, mean=0, std=0.5)
 
         self.w_v = nn.Linear(N_in, N, bias=False)
         nn.init.normal_(self.w_v.weight, mean=0, std=1/sqrt(N_in))
