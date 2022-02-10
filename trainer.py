@@ -1,5 +1,5 @@
 from model import RNN
-from path_generator import HoleDataset
+from path_generator import HoleDataset, MazeDataset
 from tqdm.autonotebook import tqdm
 import torch
 import torch.optim
@@ -23,12 +23,15 @@ class Trainer:
 
     def fit(self, num_epochs, num_train_batch, num_val_batch):
         min_loss = float('inf')
+        history = {'train_loss': [], 'val_loss': []}
         for epoch in tqdm(range(1, num_epochs + 1)):
             self.epoch = epoch
-            self.train(num_train_batch)
+            train_loss = self.train(num_train_batch)
+            history['train_loss'].append(train_loss)
 
             display.clear_output(wait=True)
             val_loss = self.validate(num_val_batch)
+            history['val_loss'].append(val_loss)
 
             fn = 'epoch_{}.ckpt'.format(epoch)
             self.save_checkpoint(fn)
@@ -40,12 +43,20 @@ class Trainer:
 
             self.scheduler.step()
 
+            plt.plot(history['train_loss'], label='Training loss')
+            plt.plot(history['val_loss'], label='Validation loss')
+            plt.legend()
+            plt.show()
+
+        return history
+
     def train(self, num_batch, device='cuda:0'):
         self.model.train()
         with tqdm(range(num_batch)) as t:
             for batch_idx in t:
                 t.set_description('BATCH {}'.format(batch_idx))
                 velocities, positions, initial_position = self.train_dataset.__next__()
+                steps = velocities.shape[1]
 
                 velocities = velocities.to(device)
                 positions = positions.to(device)
@@ -55,18 +66,20 @@ class Trainer:
                 loss = 0
 
                 predict = initial_position
-                for step in range(self.train_dataset.steps):
+                for step in range(steps):
                     vel = velocities[:, step]
                     pos = positions[:, step]
 
                     predict = self.model.step(predict, vel)
                     loss += F.mse_loss(predict, pos)
 
-                loss /= self.train_dataset.steps
+                loss /= steps
                 t.set_postfix(loss=loss.item())
                 t.update()
                 loss.backward()
                 self.optimizer.step()
+
+        return loss.item()
 
     def validate(self, num_batch, device='cuda:0'):
         self.model.eval()
@@ -114,10 +127,20 @@ class Trainer:
                 plt.plot([bound[0], bound[1]], [bound[3], bound[3]], color='k')
                 plt.plot([bound[0], bound[0]], [bound[2], bound[3]], color='k')
 
+        if isinstance(self.val_dataset, MazeDataset):
+            for edge in self.val_dataset.edges:
+                plt.plot([edge[0], edge[2]], [edge[1], edge[3]], color='k')
+
         plt.xticks(np.linspace(-1, 1, 21))
         plt.yticks(np.linspace(-1, 1, 21))
         plt.xlim([-1.1, 1.1])
         plt.ylim([-1.1, 1.1])
+
+        box = self.val_dataset.arena_sz
+        plt.plot([box[0], box[1]], [box[2], box[2]], color='k')
+        plt.plot([box[1], box[1]], [box[2], box[3]], color='k')
+        plt.plot([box[0], box[1]], [box[3], box[3]], color='k')
+        plt.plot([box[0], box[0]], [box[2], box[3]], color='k')
 
         fn = name + '_' if name else ''
         path = os.path.join(self.checkpoint_path, fn + 'paths.png')
@@ -176,15 +199,15 @@ def main():
     model = model.to('cuda:0')
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-2, momentum=0.9)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 50, 60], gamma=0.1)
-    train_dataset = HoleDataset(batch_size=128, steps=5)
-    val_dataset = HoleDataset(batch_size=512, steps=20)
+    train_dataset = HoleDataset(batch_size=128, dataset_size=128, steps=5)
+    val_dataset = HoleDataset(batch_size=512, dataset_size=5120, steps=20)
     
     ckpt_path = os.path.abspath('./checkpoints')
     if not os.path.exists(ckpt_path):
         os.makedirs(ckpt_path)
     trainer = Trainer(model, optimizer, scheduler, train_dataset, val_dataset,
                       checkpoint_path='./checkpoints')
-    trainer.fit(num_epochs=70, num_train_batch=1000, num_val_batch=10)
+    history = trainer.fit(num_epochs=70, num_train_batch=1000, num_val_batch=10)
 
 
 if __name__ == '__main__':
