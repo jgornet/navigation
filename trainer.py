@@ -43,10 +43,10 @@ class Trainer:
 
             self.scheduler.step()
 
-            plt.plot(history['train_loss'], label='Training loss')
-            plt.plot(history['val_loss'], label='Validation loss')
-            plt.legend()
-            plt.show()
+            fn = os.path.join(self.checkpoint_path, 'train_loss.npy')
+            np.save(fn, np.array(history['train_loss']))
+            fn = os.path.join(self.checkpoint_path, 'val_loss.npy')
+            np.save(fn, np.array(history['val_loss']))
 
         return history
 
