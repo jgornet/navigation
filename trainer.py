@@ -63,17 +63,9 @@ class Trainer:
                 initial_position = initial_position.to(device)
 
                 self.optimizer.zero_grad()
-                loss = 0
+                predict = self.model(initial_position, velocities)
+                loss = F.mse_loss(predict, positions)
 
-                predict = initial_position
-                for step in range(steps):
-                    vel = velocities[:, step]
-                    pos = positions[:, step]
-
-                    predict = self.model.step(predict, vel)
-                    loss += F.mse_loss(predict, pos)
-
-                loss /= steps
                 t.set_postfix(loss=loss.item())
                 t.update()
                 loss.backward()
@@ -91,21 +83,24 @@ class Trainer:
                 positions = positions.to(device)
                 initial_position = initial_position.to(device)
                 
-                predict = initial_position
-                prediction = np.zeros((self.val_dataset.batch_size, self.val_dataset.steps, 2))
-                for step in range(self.val_dataset.steps):
-                    vel = velocities[:, step]
-                    pos = positions[:, step]
+                prediction = self.model(initial_position, velocities)
+                loss = F.mse_loss(prediction, positions)
 
-                    predict = self.model.step(predict, vel)
-                    prediction[:, step] = predict.cpu().numpy()
-                    loss += F.mse_loss(predict, pos)
-
-                loss /= self.val_dataset.steps
             loss /= num_batch
             tqdm.write('Test Loss: {:7f}'.format(loss.item()))
-            self.save_fig(prediction, positions, name='epoch_{}'.format(self.epoch))
-            self.create_halfspace_plot(self.model, self.val_dataset.bounds)
+            self.save_fig(prediction.cpu().numpy(), positions, name='epoch_{}'.format(self.epoch))
+
+            W_hx = self.model.w_out.weight
+            W_hh = self.model.rnn.weight_hh_l0
+            W_v = self.model.rnn.weight_ih_l0
+            W_v = W_v.cpu().numpy()
+            
+            W_x = W_hh @ W_hx.t() @ torch.linalg.inv(W_hx @ W_hx.t())
+            W_x = W_x.cpu().numpy()
+            
+            b_1 = self.model.rnn.bias_ih_l0 + self.model.rnn.bias_hh_l0
+            b_1 = b_1.cpu().numpy()
+            self.create_halfspace_plot(W_x, W_v, b_1)
 
         return loss.item()
 
@@ -148,12 +143,7 @@ class Trainer:
         plt.show()
         plt.close()
 
-    def create_halfspace_plot(self, model, bounds, vel=[-0.01, 0], linewidth=0.5):
-        # Create local variables from loaded weights
-        W_x = model.w_x.weight.detach().cpu().numpy()
-        b_1 = model.w_x.bias.detach().cpu().numpy()
-        W_v = model.w_v.weight.detach().cpu().numpy()
-
+    def create_halfspace_plot(self, W_x, W_v, b_1, vel=[-0.01, 0], linewidth=0.5):
         # Initialize the figure
         x = np.linspace(-1, 1, 201)
         y = np.linspace(-1, 1, 201)
@@ -171,24 +161,33 @@ class Trainer:
             else:
                 plt.plot(np.ones(2) * -b_1[i]/W_x[i, 0], [-1.1, 1.1], color=plt.cm.Blues(0.2), linewidth=linewidth)
 
+        # plt.xlim([-1.1, 1.1])
+        # plt.ylim([-1.1, 1.1])
+
+        # plt.xticks([])
+        # plt.yticks([])
+
+        if isinstance(self.val_dataset, HoleDataset):
+            for bound in self.val_dataset.bounds:
+                plt.plot([bound[0], bound[1]], [bound[2], bound[2]], color='k')
+                plt.plot([bound[1], bound[1]], [bound[2], bound[3]], color='k')
+                plt.plot([bound[0], bound[1]], [bound[3], bound[3]], color='k')
+                plt.plot([bound[0], bound[0]], [bound[2], bound[3]], color='k')
+
+        if isinstance(self.val_dataset, MazeDataset):
+            for edge in self.val_dataset.edges:
+                plt.plot([edge[0], edge[2]], [edge[1], edge[3]], color='k')
+
+        plt.xticks(np.linspace(-1, 1, 21))
+        plt.yticks(np.linspace(-1, 1, 21))
         plt.xlim([-1.1, 1.1])
         plt.ylim([-1.1, 1.1])
 
-        plt.xticks([])
-        plt.yticks([])
-
-        box = [-1, 1, -1, 1]
+        box = self.val_dataset.arena_sz
         plt.plot([box[0], box[1]], [box[2], box[2]], color='k')
         plt.plot([box[1], box[1]], [box[2], box[3]], color='k')
         plt.plot([box[0], box[1]], [box[3], box[3]], color='k')
         plt.plot([box[0], box[0]], [box[2], box[3]], color='k')
-
-
-        for bound in bounds:
-            plt.plot([bound[0], bound[1]], [bound[2], bound[2]], color='k')
-            plt.plot([bound[1], bound[1]], [bound[2], bound[3]], color='k')
-            plt.plot([bound[0], bound[1]], [bound[3], bound[3]], color='k')
-            plt.plot([bound[0], bound[0]], [bound[2], bound[3]], color='k')
 
         plt.show()
         plt.close()
