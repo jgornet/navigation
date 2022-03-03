@@ -5,28 +5,47 @@ import numpy as np
 from math import sqrt
 
 
-class RNN(nn.Module):
-    def __init__(self, N=100, N_in=2, N_out=2, steps=20):
+class GRU(nn.Module):
+    def __init__(self, hidden_size=100):
         super().__init__()
-        
-        self.steps = steps
 
-        self.w_x = nn.Linear(N_in, N)
-        nn.init.normal_(self.w_x.weight, mean=0, std=1/sqrt(N_in))
-        nn.init.normal_(self.w_x.bias, mean=0, std=0.5)
+        self.gru = nn.GRU(input_size=2, hidden_size=hidden_size, batch_first=True)
+        self.w_out = nn.Linear(hidden_size, 2, bias=True)
 
-        self.w_v = nn.Linear(N_in, N, bias=False)
-        nn.init.normal_(self.w_v.weight, mean=0, std=1/sqrt(N_in))
+    def initialize_h(self, x):
+        bias = self.w_out.bias
+        W = self.w_out.weight
+        b = torch.linalg.solve(W @ W.t(), (x - bias).t())
+        h = b.t() @ W
 
-        self.w_out = nn.Linear(N, N_out, bias=True)
-        nn.init.normal_(self.w_out.weight, mean=0, std=1/sqrt(N))
-        nn.init.constant_(self.w_out.bias, 0)
+        return h.unsqueeze(0)
 
-    def loss(self, label, inputs):
-        return F.mse_loss(label, inputs)
+    def forward(self, x_i, v):
+        h_0 = self.initialize_h(x_i)
+        h, h_n = self.gru(v, h_0)
+        x = self.w_out(h)
 
-    def step(self, x_i, v):
-        dxdt = self.w_out(torch.relu(self.w_x(x_i) + self.w_v(v)))
-        x_f = x_i + dxdt
+        return x
 
-        return x_f
+
+class RNN(nn.Module):
+    def __init__(self, hidden_size=100):
+        super().__init__()
+        self.rnn = nn.RNN(input_size=2, hidden_size=hidden_size,
+                          batch_first=True, nonlinearity='relu')
+        self.w_out = nn.Linear(hidden_size, 2, bias=True)
+
+    def initialize_h(self, x):
+        bias = self.w_out.bias
+        W = self.w_out.weight
+        b = torch.linalg.solve(W @ W.t(), (x - bias).t())
+        h = b.t() @ W
+
+        return h.unsqueeze(0)
+
+    def forward(self, x_i, v):
+        h_0 = self.initialize_h(x_i)
+        h, h_n = self.rnn(v, h_0)
+        x = self.w_out(h)
+
+        return x

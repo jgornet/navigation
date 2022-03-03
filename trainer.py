@@ -38,7 +38,7 @@ class Trainer:
             
             if val_loss < min_loss:
                 min_loss = val_loss
-                fn = 'best_{:4f}.ckpt'.format(val_loss)
+                fn = 'best.ckpt'
                 self.save_checkpoint(fn)
 
             self.scheduler.step()

@@ -6,6 +6,7 @@ from math import sqrt
 from math import pi
 import numpy as np
 import math
+import random
 
 
 class HoleDataset(IterableDataset):
@@ -197,9 +198,9 @@ class MazeDataset(IterableDataset):
         return torch.from_numpy(egocentric).float(), torch.from_numpy(allocentric).float(), torch.from_numpy(initial_pos).float()
 
     def step(self, iteration):
-        speed = self.rng.rand(self.batch_size) * 0.05
+        speed = self.rng.rand(self.batch_size) * 0.1
 
-        ang_vel = self.rng.randn(self.batch_size) / 2
+        ang_vel = self.rng.randn(self.batch_size) / 3
         direction = np.mod(ang_vel + self.direction, 2 * np.pi)
 
         vel = np.stack([speed * np.cos(direction),
@@ -305,7 +306,8 @@ def get_neighbors(N, idx):
     return neighbors
 
 
-def generate_maze(N):
+def generate_maze(N, seed=1):
+    random.seed(seed)
     adj_list = [list() for i in range(N * N)]
     cell_stack = [0]
     visited = np.zeros(N * N, dtype=np.bool)
