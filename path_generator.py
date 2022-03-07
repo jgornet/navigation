@@ -280,6 +280,112 @@ class MazeDataset(IterableDataset):
         return initial_pos
 
 
+class ZeroCurlDataset(IterableDataset):
+    def __init__(self, batch_size, steps=50, dataset_size=None, seed=1,
+                 arena_sz=[-1, 1, -1, 1], R=0.5):
+        super().__init__()
+        self.seed = seed
+        self.rng = np.random.RandomState(seed=self.seed)
+        self.batch_size = batch_size
+        self.steps = steps
+        self.dataset_size = dataset_size
+        self.iteration = 0
+        self.arena_sz = arena_sz
+        self.R = R
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        arena_sz = self.arena_sz
+
+        # Reset the random seed if the number of samples exceeds the dataset size
+        if self.dataset_size is not None and \
+            self.dataset_size <= (self.batch_size * self.iteration):
+            self.rng = np.random.RandomState(seed=self.seed)
+            self.iteration = 0
+
+        # Initialize position and direction
+        initial_pos = self.initialize_pos()
+        self.pos = initial_pos
+        self.direction = np.arctan2(self.pos[:, 1], self.pos[:, 0])
+        self.sign = self.rng.choice([-1, 1], size=self.batch_size)
+
+        # Calculate the paths for a random walk
+        egocentric = np.empty((self.batch_size, self.steps, 2))
+        allocentric = np.empty((self.batch_size, self.steps, 2))
+        for i in range(self.steps):
+            batch = self.step(i)
+            egocentric[:, i, :], allocentric[:, i, :] = batch
+
+        self.iteration += 1
+
+        return torch.from_numpy(egocentric).float(), torch.from_numpy(allocentric).float(), torch.from_numpy(initial_pos).float()
+
+    def step(self, iteration):
+        speed = self.sign*(self.rng.rand(self.batch_size) * 0.05)
+
+        direction = self.direction
+
+        vel = np.stack([speed * np.cos(direction),
+                        speed * np.sin(direction)], axis=1)
+
+        r_f = self.pos + vel
+        self.pos = self.calculate_path(self.pos, vel)
+        self.direction = direction
+
+        return vel, self.pos
+
+    def calculate_path(self, r_i, vel, eps=1e-6):
+        # Get arena boundaries
+        arena_sz = self.arena_sz
+
+        # Get initial and final positions and calculate the displacement
+        x_i, y_i = r_i[:, 0], r_i[:, 1]
+        x_f = x_i + vel[:, 0]
+        y_f = y_i + vel[:, 1]
+        dx = vel[:, 0]
+        dy = vel[:, 1]
+        direction = np.arctan2(y_i, x_i)
+
+        # Calculate the intersection between the path and the arena boundary
+        # as t for r_f = r_i + t * dr
+        t = np.stack([(arena_sz[1] - x_i) / dx, (arena_sz[0] - x_i) / dx,
+                      (arena_sz[3] - y_i) / dy, (arena_sz[2] - y_i) / dy], axis=1)
+        t[t < 0] = 1
+        t = t.min(axis=1)
+
+        r_f = r_i + t[:, None]*vel
+
+        # Calculate the intersection between the path and the circle
+        R = self.R
+        idx = (x_f**2 + y_f**2) < R**2
+        r_f[idx, 0] = (0.5+eps)*np.cos(direction[idx])
+        r_f[idx, 1] = (0.5+eps)*np.sin(direction[idx])
+
+        return r_f
+
+    def initialize_pos(self, eps=1e-6):
+        arena_sz = self.arena_sz
+        R = self.R
+
+        initial_pos = np.stack([
+            self.rng.uniform(low=-1.0 + eps, high=1.0 - eps, size=self.batch_size),
+            self.rng.uniform(low=-1.0 + eps, high=1.0 - eps, size=self.batch_size)], axis=1)
+        x = initial_pos[:, 0]
+        y = initial_pos[:, 1]
+        oob = (x**2 + y**2) < (R**2 + eps)
+        while oob.any():
+            initial_pos[oob] = np.stack([
+              self.rng.uniform(low=-1.0 + eps, high=1.0 - eps, size=np.sum(oob)),
+              self.rng.uniform(low=-1.0 + eps, high=1.0 - eps, size=np.sum(oob))], axis=1)
+            x = initial_pos[:, 0]
+            y = initial_pos[:, 1]
+            oob = (x**2 + y**2) < (R**2 + eps)
+
+        return initial_pos
+
+
 def idx2ij(idx, N):
     i = idx % N
     j = idx // N

@@ -9,7 +9,7 @@ class GRU(nn.Module):
     def __init__(self, hidden_size=100):
         super().__init__()
 
-        self.gru = nn.GRU(input_size=2, hidden_size=hidden_size, batch_first=True)
+        self.rnn = nn.GRU(input_size=2, hidden_size=hidden_size, batch_first=True)
         self.w_out = nn.Linear(hidden_size, 2, bias=True)
 
     def initialize_h(self, x):
@@ -22,10 +22,10 @@ class GRU(nn.Module):
 
     def forward(self, x_i, v):
         h_0 = self.initialize_h(x_i)
-        h, h_n = self.gru(v, h_0)
-        x = self.w_out(h)
+        h, h_n = self.rnn(v, h_0)
+        dx = self.w_out(h)
 
-        return x
+        return x_i.unsqueeze(1) + dx
 
 
 class RNN(nn.Module):
@@ -46,6 +46,6 @@ class RNN(nn.Module):
     def forward(self, x_i, v):
         h_0 = self.initialize_h(x_i)
         h, h_n = self.rnn(v, h_0)
-        x = self.w_out(h)
+        dx = self.w_out(h)
 
-        return x
+        return x_i.unsqueeze(1) + dx
